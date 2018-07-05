@@ -44,14 +44,16 @@ weights = {
     'gen_out': tf.Variable(glorot_init([gen_hidden_dim, image_dim])),
     'disc_hidden1': tf.Variable(glorot_init([num_hidden, disc_hidden_dim])),
     'disc_out': tf.Variable(glorot_init([disc_hidden_dim, 1])),
-    'lstm_weight':tf.get_variable('lstm_weight',shape=[input_depth + h_depth, 4 * num_hidden])
+    'lstm_weight': tf.get_variable('lstm_weight',shape=[input_depth + h_depth, 4 * num_hidden]),
+    'gru_weight1': tf.get_variable('gru_weight1',shape=[input_depth + h_depth, 2 * num_hidden]),
+    'gru_weight2': tf.get_variable('gru_weight2', shape=[input_depth + h_depth, num_hidden])
 }
 biases = {
     'gen_hidden1': tf.Variable(tf.zeros([gen_hidden_dim])),
     'gen_out': tf.Variable(tf.zeros([image_dim])),
     'disc_hidden1': tf.Variable(tf.zeros([disc_hidden_dim])),
     'disc_out': tf.Variable(tf.zeros([1])),
-    'lstm_bias':tf.get_variable('lstm_bias',shape=[4 * num_hidden],
+    'lstm_bias': tf.get_variable('lstm_bias',shape=[4 * num_hidden],
                 initializer=init_ops.zeros_initializer(dtype=tf.int32))
 }
 

@@ -40,14 +40,45 @@ class BasicLSTMCell(base_layer.Layer):
         new_state = (new_c, new_h)
         return new_h, new_state
 
-def impl(x, weights, biases):
-    state = (tf.Variable(tf.zeros([batch_size, num_hidden]), trainable=False),
-             tf.Variable(tf.zeros([batch_size, num_hidden]), trainable=False))
+class GRUCell(base_layer.Layer):
+    def __init__(self, inputs, num_units, kernel, kernel2, reuse=None):
+        self._num_units = num_units
+        self._gate_linear = None
+        self._candidate_linear = None
+        self._kernel = kernel
+        self._kernel2 = kernel2
+        self._bias_initializer = None
+        
+    def __call__(self, inputs, state):
+        with tf.variable_scope("gates"):  # Reset gate and update gate.
+            self._gate_linear = math_ops.matmul(array_ops.concat([inputs, state], 1), self._kernel)
+        self._gate_linear = math_ops.matmul(array_ops.concat([inputs, state], 1), self._kernel)
+        value = math_ops.sigmoid(math_ops.add(self._gate_linear,
+                                              tf.Variable(tf.ones([batch_size, 1]))))
+        r, u = array_ops.split(value=value, num_or_size_splits=2, axis=1)
+
+        r_state = r * state
+        with tf.variable_scope("candidate"):
+            self._candidate_linear = math_ops.matmul(array_ops.concat([inputs, r_state], 1), self._kernel2)
+
+        c = math_ops.tanh(self._candidate_linear)
+        new_h = u * state + (1 - u) * c
+        return new_h, new_h
+
+def impl(x, weights, biases, rnn='lstm'):
+    if rnn == 'lstm':
+        state = (tf.Variable(tf.zeros([batch_size, num_hidden]), trainable=False),
+                 tf.Variable(tf.zeros([batch_size, num_hidden]), trainable=False))
+    elif rnn == 'gru':
+        state = tf.Variable(tf.zeros([batch_size, num_hidden]), trainable=False)
     outputs = []
     x = tf.unstack(x, axis = 1)
     inputs = x[0]
-    lstmcell = BasicLSTMCell(inputs, weights['lstm_weight'], biases['lstm_bias'], forget_bias=1.0)
+    if rnn == 'lstm':
+        rnncell = BasicLSTMCell(inputs, weights['lstm_weight'], biases['lstm_bias'], forget_bias=1.0)
+    elif rnn == 'gru':
+        rnncell = GRUCell(inputs, num_hidden, weights['gru_weight1'], biases['gru_weight2'], )
     for input_ in x:
-        output, state = lstmcell(input_, state)
+        output, state = rnncell(input_, state)
         outputs.append(output)
     return outputs[-1]
