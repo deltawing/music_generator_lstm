@@ -8,6 +8,9 @@ Experimental pipeline is implemented in Python 3.
 You have to import some Python 3 packages before you can run the script, packages are as follows:
 * numpy
 * scipy
+* pretty_midi
+* tqdm
+* pathlib
 * tensorflow
 
 ## Running the experiment
