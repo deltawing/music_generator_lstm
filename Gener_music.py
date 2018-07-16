@@ -7,22 +7,20 @@ Created on Fri Jun  8 20:50:19 2018
 import tensorflow as tf
 import numpy as np
 import pretty_midi
+from tensorflow.contrib import data
 #from Data import CHANNEL_NUM, CLASS_NUM, INPUT_LENGTH
 from Data import CLASS_NUM, INPUT_LENGTH
-from tensorflow.contrib import data
-from tensorflow.python.ops import init_ops
-from Self_lib import impl
 # total_row = 2400
+stride = 3
 total_batch = 250
-gen_hidden_dim = 2048
-disc_hidden_dim = 2048
-noise_dim = 512
+gen_hidden_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3) # 4*20*4**3
+disc_hidden_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3)
+noise_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1)
 batch_size = 20
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
 learning_rate = 0.0002
-image_dim = CLASS_NUM * INPUT_LENGTH  #
-num_hidden = 256
-h_depth = num_hidden
+image_dim = CLASS_NUM * INPUT_LENGTH  # 82*514
+DIM = 3 # Model dimensionality
 
 def glorot_init(shape):
     return tf.random_normal(shape=shape, stddev=1. / tf.sqrt(shape[0] / 2.))
@@ -32,70 +30,152 @@ def lrelu(x, leak=0.3, name="lrelu"):
     f2 = 0.5 * (1 - leak)
     return f1 * x + f2 * abs(x)
 
-gen_input = tf.placeholder(tf.float32, shape=[None, noise_dim], name='input_noise')
-disc_input = tf.placeholder(tf.float32, shape=[None, CLASS_NUM, INPUT_LENGTH], name='disc_input')
-y = tf.transpose(disc_input, perm=[0, 2, 1])
-x = tf.unstack(y, axis = 1)
-inputs = x[0]
-input_depth = inputs.get_shape().as_list()[1]
+def LeakyReLU(x, alpha=0.2):
+    return tf.maximum(alpha*x, x)
+
+def construct_filter_bias(style, input_dim, output_dim, filter_size, stride = 2):
+    if style == 'conv2d':
+        fan_in = input_dim * filter_size**2 / (stride**2)
+        fan_out = output_dim * filter_size**2
+        filter_value = np.random.uniform(
+        low = -np.sqrt(4./(fan_in+fan_out)) * np.sqrt(3),
+        high = np.sqrt(4./(fan_in+fan_out)) * np.sqrt(3),
+        size = (filter_size, filter_size, input_dim, output_dim)
+        ).astype('float32')
+        
+    elif style == 'deconv2d':
+        fan_in = input_dim * filter_size**2
+        fan_out = output_dim * filter_size**2 / (stride**2)
+        
+        filter_value = np.random.uniform(
+        low = -np.sqrt(4./(fan_in+fan_out)) * np.sqrt(3),
+        high = np.sqrt(4./(fan_in+fan_out)) * np.sqrt(3),
+        size = (filter_size, filter_size, output_dim, input_dim)
+        ).astype('float32')
+    bias_value = np.zeros(output_dim, dtype='float32')
+
+    return filter_value, bias_value
+
+deconv2d_filter_value, deconv2d_bias_value, conv2d_filter_value, conv2d_bias_value = [], [], [], []
+for i in range(3):
+    a, b = construct_filter_bias('deconv2d', 4**(DIM-i), 4**(DIM-i-1), 5, stride)
+    deconv2d_filter_value.append(a)
+    deconv2d_bias_value.append(b)
+for i in range(3, 0, -1):
+    a, b = construct_filter_bias('conv2d', 4**(DIM-i), 4**(DIM-i+1), 5, stride)
+    conv2d_filter_value.append(a)
+    conv2d_bias_value.append(b)
 
 weights = {
     'gen_hidden1': tf.Variable(glorot_init([noise_dim, gen_hidden_dim])),
-    'gen_out': tf.Variable(glorot_init([gen_hidden_dim, image_dim])),
-    'disc_hidden1': tf.Variable(glorot_init([num_hidden, disc_hidden_dim])),
+    'gen_deconv2d_filter1':tf.Variable(deconv2d_filter_value[0], name = 'Deconv2D.filter1'),
+    'gen_deconv2d_filter2':tf.Variable(deconv2d_filter_value[1], name = 'Deconv2D.filter2'),
+    'gen_deconv2d_filter3':tf.Variable(deconv2d_filter_value[2], name = 'Deconv2D.filter3'),
+    'disc_conv2d_filter1':tf.Variable(conv2d_filter_value[0], name = 'Conv2D.filter1'),
+    'disc_conv2d_filter2':tf.Variable(conv2d_filter_value[1], name = 'Conv2D.filter2'),
+    'disc_conv2d_filter3':tf.Variable(conv2d_filter_value[2], name = 'Conv2D.filter3'),
     'disc_out': tf.Variable(glorot_init([disc_hidden_dim, 1])),
-    'lstm_weight': tf.get_variable('lstm_weight',shape=[input_depth + h_depth, 4 * num_hidden]),
-    'gru_weight1': tf.get_variable('gru_weight1',shape=[input_depth + h_depth, 2 * num_hidden]),
-    'gru_weight2': tf.get_variable('gru_weight2', shape=[input_depth + h_depth, num_hidden])
 }
 biases = {
     'gen_hidden1': tf.Variable(tf.zeros([gen_hidden_dim])),
-    'gen_out': tf.Variable(tf.zeros([image_dim])),
-    'disc_hidden1': tf.Variable(tf.zeros([disc_hidden_dim])),
+    'gen_deconv2d_bias1':tf.Variable(deconv2d_bias_value[0], name = 'Deconv2D.bias1'),
+    'gen_deconv2d_bias2':tf.Variable(deconv2d_bias_value[1], name = 'Deconv2D.bias2'),
+    'gen_deconv2d_bias3':tf.Variable(deconv2d_bias_value[2], name = 'Deconv2D.bias3'),
+    'disc_conv2d_bias1':tf.Variable(conv2d_bias_value[0], name = 'Conv2D.bias1'),
+    'disc_conv2d_bias2':tf.Variable(conv2d_bias_value[1], name = 'Conv2D.bias2'),
+    'disc_conv2d_bias3':tf.Variable(conv2d_bias_value[2], name = 'Conv2D.bias3'),
     'disc_out': tf.Variable(tf.zeros([1])),
-    'lstm_bias': tf.get_variable('lstm_bias',shape=[4 * num_hidden],
-                initializer=init_ops.zeros_initializer(dtype=tf.int32))
 }
 
 def generator(x):
-    hidden_layer = tf.add(tf.matmul(x, weights['gen_hidden1']), biases['gen_hidden1'])
-    hidden_layer = lrelu(hidden_layer)
-    out_layer = tf.add(tf.matmul(hidden_layer, weights['gen_out']), biases['gen_out'])
+    hidden_layer1 = tf.add(tf.matmul(x, weights['gen_hidden1']), biases['gen_hidden1'])
+    hidden_layer1 = lrelu(hidden_layer1)
+    hidden_layer1 = tf.reshape(hidden_layer1, 
+                               [-1, 4**DIM, (CLASS_NUM-1)//stride**3+1, (INPUT_LENGTH-1)//stride**3+1])
+    
+    input_shape = tf.shape(hidden_layer1)
+    hidden_layer2 = tf.nn.conv2d_transpose(value=hidden_layer1, filter=weights['gen_deconv2d_filter1'],
+            output_shape=tf.stack([input_shape[0], 4**(DIM-1), 10, 58]), 
+            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
+        )
+    hidden_layer2 = tf.nn.bias_add(hidden_layer2, biases['gen_deconv2d_bias1'], data_format='NCHW')
+    hidden_layer2 = tf.nn.relu(hidden_layer2)
+    
+    input_shape = tf.shape(hidden_layer2)
+    hidden_layer3 = tf.nn.conv2d_transpose(value=hidden_layer2, filter=weights['gen_deconv2d_filter2'],
+            output_shape=tf.stack([input_shape[0], 4**(DIM-2), 28, 172]), 
+            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
+        )
+    hidden_layer3 = tf.nn.bias_add(hidden_layer3, biases['gen_deconv2d_bias2'], data_format='NCHW')
+    hidden_layer3 = tf.nn.relu(hidden_layer3)
+    
+    input_shape = tf.shape(hidden_layer3)
+    hidden_layer4 = tf.nn.conv2d_transpose(value=hidden_layer3, filter=weights['gen_deconv2d_filter3'],
+            output_shape=tf.stack([input_shape[0], 4**(DIM-3), 82, 514]), 
+            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
+        )
+    hidden_layer4 = tf.nn.bias_add(hidden_layer4, biases['gen_deconv2d_bias3'], data_format='NCHW')
+    hidden_layer4 = tf.nn.relu(hidden_layer4)
+    
+    out_layer = tf.reshape(hidden_layer4, [-1, CLASS_NUM * INPUT_LENGTH])
     return out_layer
 
-def discriminator(x, reuse=False):
-    # input as [-1, CLASS_NUM, INPUT_LENGTH]:[-1, 72, 500]
-    global num_hidden
+
+def discriminator(inputs, reuse=False):
     with tf.variable_scope('discriminator') as scope:
         if reuse:
             scope.reuse_variables()
-    y = tf.transpose(x, perm=[0, 2, 1])
-    hidden_layer = tf.add(tf.matmul(impl(y, weights, biases), weights['disc_hidden1']), biases['disc_hidden1'])
-    hidden_layer = lrelu(hidden_layer)
-    out_layer = tf.add(tf.matmul(hidden_layer, weights['disc_out']), biases['disc_out'])
+    hidden_layer1 = tf.reshape(inputs, [-1, 1, CLASS_NUM, INPUT_LENGTH])
+    
+    hidden_layer2 = tf.nn.conv2d(input=hidden_layer1, filter=weights['disc_conv2d_filter1'],
+            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
+        )
+    hidden_layer2 = tf.nn.bias_add(hidden_layer2, biases['disc_conv2d_bias1'], data_format='NCHW')
+    hidden_layer2 = tf.nn.relu(hidden_layer2)
+    
+    hidden_layer3 = tf.nn.conv2d(input=hidden_layer2, filter=weights['disc_conv2d_filter2'],
+            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
+        )
+    hidden_layer3 = tf.nn.bias_add(hidden_layer3, biases['disc_conv2d_bias2'], data_format='NCHW')
+    hidden_layer3 = tf.nn.relu(hidden_layer3)
+    
+    hidden_layer4 = tf.nn.conv2d(input=hidden_layer3, filter=weights['disc_conv2d_filter3'],
+            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
+        )
+    hidden_layer4 = tf.nn.bias_add(hidden_layer4, biases['disc_conv2d_bias3'], data_format='NCHW')
+    hidden_layer4 = tf.nn.relu(hidden_layer4)
+    
+    output_layer = tf.reshape(hidden_layer4, [-1, ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3)])
+    out_layer = tf.add(tf.matmul(output_layer, weights['disc_out']), biases['disc_out'])   
     return out_layer
 
+
+gen_input = tf.placeholder(tf.float32, shape=[None, noise_dim], name='input_noise')
+disc_input = tf.placeholder(tf.float32, shape=[None, image_dim], name='disc_input')
+
 gen_sample = generator(gen_input)
-gen_sample_re = tf.reshape(gen_sample,[-1, CLASS_NUM, INPUT_LENGTH])
-gen_loss = -tf.reduce_mean(discriminator(gen_sample_re))
-disc_loss = -tf.reduce_mean(discriminator(disc_input) - discriminator(gen_sample_re))
+gen_loss = -tf.reduce_mean(discriminator(gen_sample))
+disc_loss = -tf.reduce_mean(discriminator(disc_input) - discriminator(gen_sample))
 
 alpha = tf.random_uniform(shape=[batch_size,1], minval=0.,maxval=1.)
-interpolated = tf.reshape(disc_input,[-1, CLASS_NUM*INPUT_LENGTH]) + \
-                alpha*(gen_sample-tf.reshape(disc_input,[-1, CLASS_NUM*INPUT_LENGTH]))
-#从实际和生成的x中间位置随机抽x
-inte_logit = discriminator(tf.reshape(interpolated, [-1, CLASS_NUM, INPUT_LENGTH]), reuse=True)
+interpolated = disc_input + alpha*(gen_sample-disc_input)#从实际和生成的x中间位置随机抽x
+inte_logit = discriminator(interpolated, reuse=True)
 #把tensor中的list单独提取出来，要不下面的reduce_sum结果不对
 gradients = tf.gradients(inte_logit, [interpolated])[0] 
 slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), 1))
 gradient_penalty = tf.reduce_mean((slopes-1.)**2)
 disc_loss += LAMBDA*gradient_penalty
 
-gen_vars = [weights['gen_hidden1'], weights['gen_out'], biases['gen_hidden1'], biases['gen_out']]
-disc_vars = [weights['disc_hidden1'], weights['disc_out'], biases['disc_hidden1'], biases['disc_out'],
-             weights['lstm_weight'], biases['lstm_bias']]
+gen_vars = [weights['gen_hidden1'], weights['gen_deconv2d_filter1'], weights['gen_deconv2d_filter2'], weights['gen_deconv2d_filter3'],
+            biases['gen_hidden1'], biases['gen_deconv2d_bias1'], biases['gen_deconv2d_bias2'], biases['gen_deconv2d_bias3'],
+            ]
+disc_vars = [weights['disc_conv2d_filter1'], weights['disc_conv2d_filter2'], weights['disc_conv2d_filter3'], weights['disc_out'],
+             biases['disc_conv2d_bias1'], biases['disc_conv2d_bias2'], biases['disc_conv2d_bias3'], biases['disc_out']
+             ]
+
 train_gen = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(gen_loss, var_list=gen_vars)
 train_disc = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(disc_loss, var_list=disc_vars)
+
 
 dataset = tf.data.TFRecordDataset('Dataset/dataset_1.tfrecord')
 def _parse(example_proto):
@@ -117,12 +197,12 @@ with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     for i in range(total_batch):
         tfdata = sess.run(real_input_next_element)
-        reshape_tfdata = tfdata.reshape([-1, CLASS_NUM, INPUT_LENGTH])    #       
+        reshape_tfdata = tfdata.reshape([-1, image_dim])    #       
         z = np.random.uniform(-1., 1., size=[batch_size, noise_dim])
         _, gl = sess.run([train_gen, gen_loss], feed_dict={gen_input: z})
         for j in range(3): #
             _, dl = sess.run([train_disc, disc_loss], feed_dict={disc_input: reshape_tfdata, gen_input: z})
-        if i % 50 == 0:
+        if i % 20 == 0:
             print('Step %i' % (i+1))
             print('Generator Loss:, Discriminator Loss: ', gl, dl)
 

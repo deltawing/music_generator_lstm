@@ -14,7 +14,7 @@ from Data import CLASS_NUM, INPUT_LENGTH
 # total_row = 2400
 total_batch = 250
 gen_hidden_dim = 512
-disc_hidden_dim = 1024
+disc_hidden_dim = 512
 noise_dim = 512
 batch_size = 20
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
@@ -31,33 +31,42 @@ def lrelu(x, leak=0.3, name="lrelu"):
 
 weights = {
     'gen_hidden1': tf.Variable(glorot_init([noise_dim, gen_hidden_dim])),
-    'gen_hidden2': tf.Variable(glorot_init([gen_hidden_dim, gen_hidden_dim])),
-    'gen_hidden3': tf.Variable(glorot_init([gen_hidden_dim, gen_hidden_dim])),
+    #'gen_hidden2': tf.Variable(glorot_init([gen_hidden_dim, gen_hidden_dim])),
+    #'gen_hidden3': tf.Variable(glorot_init([gen_hidden_dim, gen_hidden_dim])),
     'gen_hidden4': tf.Variable(glorot_init([gen_hidden_dim, gen_hidden_dim])),
     'gen_out': tf.Variable(glorot_init([gen_hidden_dim, image_dim])),
     'disc_hidden1': tf.Variable(glorot_init([image_dim, disc_hidden_dim])),
     'disc_hidden2': tf.Variable(glorot_init([disc_hidden_dim, disc_hidden_dim])),
+    'disc_hidden3': tf.Variable(glorot_init([disc_hidden_dim, disc_hidden_dim])),
+    'disc_hidden4': tf.Variable(glorot_init([disc_hidden_dim, disc_hidden_dim])),
+    'disc_hidden5': tf.Variable(glorot_init([disc_hidden_dim, disc_hidden_dim])),
+    'disc_hidden6': tf.Variable(glorot_init([disc_hidden_dim, disc_hidden_dim])),
     'disc_out': tf.Variable(glorot_init([disc_hidden_dim, 1])),
 }
 biases = {
     'gen_hidden1': tf.Variable(tf.zeros([gen_hidden_dim])),
-    'gen_hidden2': tf.Variable(tf.zeros([gen_hidden_dim])),
-    'gen_hidden3': tf.Variable(tf.zeros([gen_hidden_dim])),
+    #'gen_hidden2': tf.Variable(tf.zeros([gen_hidden_dim])),
+    #'gen_hidden3': tf.Variable(tf.zeros([gen_hidden_dim])),
     'gen_hidden4': tf.Variable(tf.zeros([gen_hidden_dim])),
     'gen_out': tf.Variable(tf.zeros([image_dim])),
     'disc_hidden1': tf.Variable(tf.zeros([disc_hidden_dim])),
     'disc_hidden2': tf.Variable(tf.zeros([disc_hidden_dim])),
+    'disc_hidden3': tf.Variable(tf.zeros([disc_hidden_dim])),
+    'disc_hidden4': tf.Variable(tf.zeros([disc_hidden_dim])),
+    'disc_hidden5': tf.Variable(tf.zeros([disc_hidden_dim])),
+    'disc_hidden6': tf.Variable(tf.zeros([disc_hidden_dim])),
     'disc_out': tf.Variable(tf.zeros([1])),
 }
 
 def generator(x):
     hidden_layer1 = tf.add(tf.matmul(x, weights['gen_hidden1']), biases['gen_hidden1'])
     hidden_layer1 = lrelu(hidden_layer1)
-    hidden_layer2 = tf.add(tf.matmul(hidden_layer1, weights['gen_hidden2']), biases['gen_hidden2'])
-    hidden_layer2 = lrelu(hidden_layer2)
-    hidden_layer3 = tf.add(tf.matmul(hidden_layer2, weights['gen_hidden3']), biases['gen_hidden3'])
-    hidden_layer3 = lrelu(hidden_layer3)
-    hidden_layer4 = tf.add(tf.matmul(hidden_layer3, weights['gen_hidden4']), biases['gen_hidden4'])
+    #hidden_layer2 = tf.add(tf.matmul(hidden_layer1, weights['gen_hidden2']), biases['gen_hidden2'])
+    #hidden_layer2 = lrelu(hidden_layer2)
+    #hidden_layer3 = tf.add(tf.matmul(hidden_layer2, weights['gen_hidden3']), biases['gen_hidden3'])
+    #hidden_layer3 = lrelu(hidden_layer3)
+    #hidden_layer4 = tf.add(tf.matmul(hidden_layer3, weights['gen_hidden4']), biases['gen_hidden4'])
+    hidden_layer4 = tf.add(tf.matmul(hidden_layer1, weights['gen_hidden4']), biases['gen_hidden4'])
     hidden_layer4 = lrelu(hidden_layer4)
     out_layer = tf.add(tf.matmul(hidden_layer4, weights['gen_out']), biases['gen_out'])
     #out_layer = tf.nn.sigmoid(out_layer)
@@ -71,7 +80,15 @@ def discriminator(x, reuse=False):
     hidden_layer1 = lrelu(hidden_layer1)
     hidden_layer2 = tf.add(tf.matmul(hidden_layer1, weights['disc_hidden2']), biases['disc_hidden2'])
     hidden_layer2 = lrelu(hidden_layer2)
-    out_layer = tf.add(tf.matmul(hidden_layer2, weights['disc_out']), biases['disc_out'])
+    hidden_layer3 = tf.add(tf.matmul(hidden_layer2, weights['disc_hidden3']), biases['disc_hidden3'])
+    hidden_layer3 = lrelu(hidden_layer3)
+    hidden_layer4 = tf.add(tf.matmul(hidden_layer3, weights['disc_hidden4']), biases['disc_hidden4'])
+    hidden_layer4 = lrelu(hidden_layer4)
+    hidden_layer5 = tf.add(tf.matmul(hidden_layer4, weights['disc_hidden5']), biases['disc_hidden5'])
+    hidden_layer5 = lrelu(hidden_layer5)
+    hidden_layer6 = tf.add(tf.matmul(hidden_layer5, weights['disc_hidden6']), biases['disc_hidden6'])
+    hidden_layer6 = lrelu(hidden_layer6)
+    out_layer = tf.add(tf.matmul(hidden_layer6, weights['disc_out']), biases['disc_out'])
     #out_layer = tf.nn.sigmoid(out_layer)
     return out_layer
 
@@ -92,10 +109,12 @@ gradient_penalty = tf.reduce_mean((slopes-1.)**2)
 disc_loss += LAMBDA*gradient_penalty
 
 gen_vars = [weights['gen_hidden1'], weights['gen_out'], biases['gen_hidden1'], biases['gen_out'],
-            weights['gen_hidden2'], biases['gen_hidden2'], weights['gen_hidden3'], biases['gen_hidden3'],
+            #weights['gen_hidden2'], biases['gen_hidden2'], weights['gen_hidden3'], biases['gen_hidden3'],
             weights['gen_hidden4'], biases['gen_hidden4']]
 disc_vars = [weights['disc_hidden1'], weights['disc_out'], biases['disc_hidden1'], biases['disc_out'],
-             weights['disc_hidden2'], biases['disc_hidden2']]
+             weights['disc_hidden2'], biases['disc_hidden2'],
+             weights['disc_hidden3'], biases['disc_hidden3'],weights['disc_hidden4'], biases['disc_hidden4'],
+             weights['disc_hidden5'], biases['disc_hidden5'],weights['disc_hidden6'], biases['disc_hidden6']]
 train_gen = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(gen_loss, var_list=gen_vars)
 train_disc = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(disc_loss, var_list=disc_vars)
 
@@ -125,7 +144,7 @@ with tf.Session() as sess:
         _, gl = sess.run([train_gen, gen_loss], feed_dict={gen_input: z})
         for j in range(3): #
             _, dl = sess.run([train_disc, disc_loss], feed_dict={disc_input: reshape_tfdata, gen_input: z})
-        if i % 50 == 0:
+        if i % 20 == 0:
             print('Step %i' % (i+1))
             print('Generator Loss:, Discriminator Loss: ', gl, dl)
 
