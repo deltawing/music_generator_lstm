@@ -15,7 +15,7 @@ You have to import some Python 3 packages before you can run the script, package
 
 ## Running the experiment
 If all the dependencies are satisfied, you should create a new folder called 'Classics' and put the music files (.mid) into this folder.
-then you should run the experiment by:
+ Then you should run the experiment by:
 > python Data.py
 >
 and
