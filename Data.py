@@ -14,8 +14,8 @@ import os
 from tqdm import tqdm
 
 #CHANNEL_NUM = 2
-CLASS_NUM = 72
-INPUT_LENGTH = 500
+CLASS_NUM = 82
+INPUT_LENGTH = 600 #represent 6.00s music, only accept integers
 
 def roll(path):
     try:
@@ -24,7 +24,7 @@ def roll(path):
         tqdm.write('Error while opening')
         raise Exception
     #index = [0, 1]
-    piano_rolls = [i.get_piano_roll()[24:96] for i in song.instruments]
+    piano_rolls = [i.get_piano_roll()[20:102] for i in song.instruments]
     length = np.min([i.shape[1] for i in piano_rolls])
     if length < INPUT_LENGTH:
         tqdm.write('Too short')

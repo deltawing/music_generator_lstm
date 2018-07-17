@@ -8,18 +8,18 @@ import tensorflow as tf
 import numpy as np
 import pretty_midi
 from tensorflow.contrib import data
-#from Data import CHANNEL_NUM, CLASS_NUM, INPUT_LENGTH
-from Data import CLASS_NUM, INPUT_LENGTH
+CLASS_NUM = 82
+INPUT_LENGTH = 514
 # total_row = 2400
 stride = 3
 total_batch = 250
+batch_size = 20
 gen_hidden_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3) # 4*20*4**3
 disc_hidden_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3)
 noise_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1)
-batch_size = 20
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
 learning_rate = 0.0002
-image_dim = CLASS_NUM * INPUT_LENGTH  # 82*514
+image_dim = CLASS_NUM * INPUT_LENGTH  # need 82*514
 DIM = 3 # Model dimensionality
 
 def glorot_init(shape):
@@ -184,7 +184,7 @@ def _parse(example_proto):
     data = tf.decode_raw(parsed['roll'], tf.uint8)
     data = tf.py_func(func=np.unpackbits, inp=[data], Tout=tf.uint8)
     data = tf.cast(data, tf.float32)
-    data = tf.reshape(data, [CLASS_NUM, INPUT_LENGTH])
+    data = tf.reshape(data, [CLASS_NUM, 600])
     data = data * 2 - 1
     return data
 
@@ -197,11 +197,13 @@ with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     for i in range(total_batch):
         tfdata = sess.run(real_input_next_element)
-        reshape_tfdata = tfdata.reshape([-1, image_dim])    #       
+        reshape_tfdata = tfdata.reshape([-1, CLASS_NUM, 600])    #  
+        cuted_tfdata = reshape_tfdata[:, :, :INPUT_LENGTH]
+        reshape_cuted_tfdata = cuted_tfdata.reshape([-1, CLASS_NUM, INPUT_LENGTH])
         z = np.random.uniform(-1., 1., size=[batch_size, noise_dim])
         _, gl = sess.run([train_gen, gen_loss], feed_dict={gen_input: z})
         for j in range(3): #
-            _, dl = sess.run([train_disc, disc_loss], feed_dict={disc_input: reshape_tfdata, gen_input: z})
+            _, dl = sess.run([train_disc, disc_loss], feed_dict={disc_input: reshape_cuted_tfdata, gen_input: z})
         if i % 20 == 0:
             print('Step %i' % (i+1))
             print('Generator Loss:, Discriminator Loss: ', gl, dl)
