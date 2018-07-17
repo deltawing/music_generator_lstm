@@ -7,6 +7,8 @@ Created on Fri Jun  8 20:50:19 2018
 import tensorflow as tf
 import numpy as np
 import pretty_midi
+import os
+import shutil
 from tensorflow.contrib import data
 from Self_lib import Deconv2D, Conv2D
 CLASS_NUM = 82
@@ -14,7 +16,7 @@ INPUT_LENGTH = 514
 # total_row = 2400
 stride = 3
 total_batch = 250
-batch_size = 20
+batch_size = 20  #128
 gen_hidden_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3) # 4*20*4**3
 disc_hidden_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3)
 noise_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1)
@@ -22,6 +24,8 @@ LAMBDA = 10 # Gradient penalty lambda hyperparameter
 learning_rate = 0.0002
 image_dim = CLASS_NUM * INPUT_LENGTH# need 82*514
 DIM = 3 # Model dimensionality
+logs_path = '/tmp/tensorflow_logs/example/'
+model_path = '../ckpt/music-model.ckpt'
 
 def glorot_init(shape):
     return tf.random_normal(shape=shape, stddev=1. / tf.sqrt(shape[0] / 2.))
@@ -57,6 +61,12 @@ def construct_filter_bias(style, input_dim, output_dim, filter_size, stride = 2)
 
     return filter_value, bias_value
 
+if os.path.exists(logs_path):   # 删掉以前的summary，以免重合
+    shutil.rmtree(logs_path)
+os.makedirs(logs_path)
+print('created log_dir path')
+summary_writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
+
 deconv2d_filter_value, deconv2d_bias_value, conv2d_filter_value, conv2d_bias_value = [], [], [], []
 for i in range(3):
     a, b = construct_filter_bias('deconv2d', 4**(DIM-i), 4**(DIM-i-1), 5, stride)
@@ -87,6 +97,10 @@ biases = {
     'disc_conv2d_bias3':tf.Variable(conv2d_bias_value[2], name = 'Conv2D.bias3'),
     'disc_out': tf.Variable(tf.zeros([1])),
 }
+for name in weights:
+    tf.summary.histogram(name, weights[name]) 
+for name in biases:
+    tf.summary.histogram(name, biases[name]) 
 
 def generator(x):
     hidden_layer1 = tf.add(tf.matmul(x, weights['gen_hidden1']), biases['gen_hidden1'])
@@ -145,6 +159,7 @@ gradients = tf.gradients(inte_logit, [interpolated])[0]
 slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), 1))
 gradient_penalty = tf.reduce_mean((slopes-1.)**2)
 disc_loss += LAMBDA*gradient_penalty
+tf.summary.scalar("disc_loss", disc_loss)
 
 gen_vars = [weights['gen_hidden1'], weights['gen_deconv2d_filter1'], weights['gen_deconv2d_filter2'], weights['gen_deconv2d_filter3'],
             biases['gen_hidden1'], biases['gen_deconv2d_bias1'], biases['gen_deconv2d_bias2'], biases['gen_deconv2d_bias3'],
@@ -156,6 +171,8 @@ disc_vars = [weights['disc_conv2d_filter1'], weights['disc_conv2d_filter2'], wei
 train_gen = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(gen_loss, var_list=gen_vars)
 train_disc = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(disc_loss, var_list=disc_vars)
 
+merged_summary_op = tf.summary.merge_all()
+saver = tf.train.Saver(max_to_keep=3)
 
 dataset = tf.data.TFRecordDataset('Dataset/dataset_1.tfrecord')
 def _parse(example_proto):
@@ -175,6 +192,11 @@ real_input_next_element = iterator.get_next()
 
 with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
+    
+    if os.path.exists(model_path):
+        load_path = saver.restore(sess, model_path)
+        print("Model restored from file: %s" % load_path)
+        
     for i in range(total_batch):
         tfdata = sess.run(real_input_next_element)
         reshape_tfdata = tfdata.reshape([-1, CLASS_NUM, 600])    #  
@@ -185,9 +207,15 @@ with tf.Session() as sess:
         for j in range(3): #
             _, dl = sess.run([train_disc, disc_loss], feed_dict={disc_input: reshape_cuted_tfdata, gen_input: z})
         if i % 50 == 0:
+            summary = sess.run(merged_summary_op, feed_dict={disc_input: reshape_cuted_tfdata, gen_input: z})
+            summary_writer.add_summary(summary, i)
             print('Step %i' % (i+1))
             print('Generator Loss:, Discriminator Loss: ', gl, dl)
-
+    
+    if not os.path.exists(model_path):
+        save_path = saver.save(sess, model_path)
+        print("Model saved in file: %s" % save_path)
+    
     z = np.random.uniform(-1., 1., size=[batch_size, noise_dim])
     g = sess.run(gen_sample, feed_dict={gen_input: z})
     count = 0
