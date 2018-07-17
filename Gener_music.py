@@ -8,6 +8,7 @@ import tensorflow as tf
 import numpy as np
 import pretty_midi
 from tensorflow.contrib import data
+from Self_lib import Deconv2D, Conv2D
 CLASS_NUM = 82
 INPUT_LENGTH = 514
 # total_row = 2400
@@ -19,7 +20,7 @@ disc_hidden_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1)
 noise_dim = ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1)
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
 learning_rate = 0.0002
-image_dim = CLASS_NUM * INPUT_LENGTH  # need 82*514
+image_dim = CLASS_NUM * INPUT_LENGTH# need 82*514
 DIM = 3 # Model dimensionality
 
 def glorot_init(shape):
@@ -93,29 +94,17 @@ def generator(x):
     hidden_layer1 = tf.reshape(hidden_layer1, 
                                [-1, 4**DIM, (CLASS_NUM-1)//stride**3+1, (INPUT_LENGTH-1)//stride**3+1])
     
-    input_shape = tf.shape(hidden_layer1)
-    hidden_layer2 = tf.nn.conv2d_transpose(value=hidden_layer1, filter=weights['gen_deconv2d_filter1'],
-            output_shape=tf.stack([input_shape[0], 4**(DIM-1), 10, 58]), 
-            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
-        )
-    hidden_layer2 = tf.nn.bias_add(hidden_layer2, biases['gen_deconv2d_bias1'], data_format='NCHW')
-    hidden_layer2 = tf.nn.relu(hidden_layer2)
+    hidden_layer2 = Deconv2D('Deconv2D1', hidden_layer=hidden_layer1, filters=weights['gen_deconv2d_filter1'], 
+                             _biases=biases['gen_deconv2d_bias1'], stride=stride, 
+                             height=10, width=58, out_dim=4**(DIM-1))
     
-    input_shape = tf.shape(hidden_layer2)
-    hidden_layer3 = tf.nn.conv2d_transpose(value=hidden_layer2, filter=weights['gen_deconv2d_filter2'],
-            output_shape=tf.stack([input_shape[0], 4**(DIM-2), 28, 172]), 
-            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
-        )
-    hidden_layer3 = tf.nn.bias_add(hidden_layer3, biases['gen_deconv2d_bias2'], data_format='NCHW')
-    hidden_layer3 = tf.nn.relu(hidden_layer3)
+    hidden_layer3 = Deconv2D('Deconv2D2', hidden_layer=hidden_layer2, filters=weights['gen_deconv2d_filter2'], 
+                             _biases=biases['gen_deconv2d_bias2'], stride=stride, 
+                             height=28, width=172, out_dim=4**(DIM-2))
     
-    input_shape = tf.shape(hidden_layer3)
-    hidden_layer4 = tf.nn.conv2d_transpose(value=hidden_layer3, filter=weights['gen_deconv2d_filter3'],
-            output_shape=tf.stack([input_shape[0], 4**(DIM-3), 82, 514]), 
-            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
-        )
-    hidden_layer4 = tf.nn.bias_add(hidden_layer4, biases['gen_deconv2d_bias3'], data_format='NCHW')
-    hidden_layer4 = tf.nn.relu(hidden_layer4)
+    hidden_layer4 = Deconv2D('Deconv2D3', hidden_layer=hidden_layer3, filters=weights['gen_deconv2d_filter3'], 
+                             _biases=biases['gen_deconv2d_bias3'], stride=stride, 
+                             height=82, width=514, out_dim=4**(DIM-3))
     
     out_layer = tf.reshape(hidden_layer4, [-1, CLASS_NUM * INPUT_LENGTH])
     return out_layer
@@ -127,23 +116,14 @@ def discriminator(inputs, reuse=False):
             scope.reuse_variables()
     hidden_layer1 = tf.reshape(inputs, [-1, 1, CLASS_NUM, INPUT_LENGTH])
     
-    hidden_layer2 = tf.nn.conv2d(input=hidden_layer1, filter=weights['disc_conv2d_filter1'],
-            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
-        )
-    hidden_layer2 = tf.nn.bias_add(hidden_layer2, biases['disc_conv2d_bias1'], data_format='NCHW')
-    hidden_layer2 = tf.nn.relu(hidden_layer2)
+    hidden_layer2 = Conv2D('Conv2D1', hidden_layer=hidden_layer1, filters=weights['disc_conv2d_filter1'],
+                           _biases=biases['disc_conv2d_bias1'], stride=stride)
     
-    hidden_layer3 = tf.nn.conv2d(input=hidden_layer2, filter=weights['disc_conv2d_filter2'],
-            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
-        )
-    hidden_layer3 = tf.nn.bias_add(hidden_layer3, biases['disc_conv2d_bias2'], data_format='NCHW')
-    hidden_layer3 = tf.nn.relu(hidden_layer3)
+    hidden_layer3 = Conv2D('Conv2D2', hidden_layer=hidden_layer2, filters=weights['disc_conv2d_filter2'],
+                           _biases=biases['disc_conv2d_bias2'], stride=stride)
     
-    hidden_layer4 = tf.nn.conv2d(input=hidden_layer3, filter=weights['disc_conv2d_filter3'],
-            strides=[1, 1, stride, stride], padding='SAME', data_format='NCHW'
-        )
-    hidden_layer4 = tf.nn.bias_add(hidden_layer4, biases['disc_conv2d_bias3'], data_format='NCHW')
-    hidden_layer4 = tf.nn.relu(hidden_layer4)
+    hidden_layer4 = Conv2D('Conv2D3', hidden_layer=hidden_layer3, filters=weights['disc_conv2d_filter3'],
+                           _biases=biases['disc_conv2d_bias3'], stride=stride)
     
     output_layer = tf.reshape(hidden_layer4, [-1, ((CLASS_NUM-1)//stride**3+1) * ((INPUT_LENGTH-1)//stride**3+1) * (4**3)])
     out_layer = tf.add(tf.matmul(output_layer, weights['disc_out']), biases['disc_out'])   
@@ -199,12 +179,12 @@ with tf.Session() as sess:
         tfdata = sess.run(real_input_next_element)
         reshape_tfdata = tfdata.reshape([-1, CLASS_NUM, 600])    #  
         cuted_tfdata = reshape_tfdata[:, :, :INPUT_LENGTH]
-        reshape_cuted_tfdata = cuted_tfdata.reshape([-1, CLASS_NUM, INPUT_LENGTH])
+        reshape_cuted_tfdata = cuted_tfdata.reshape([-1, CLASS_NUM*INPUT_LENGTH])
         z = np.random.uniform(-1., 1., size=[batch_size, noise_dim])
         _, gl = sess.run([train_gen, gen_loss], feed_dict={gen_input: z})
         for j in range(3): #
             _, dl = sess.run([train_disc, disc_loss], feed_dict={disc_input: reshape_cuted_tfdata, gen_input: z})
-        if i % 20 == 0:
+        if i % 50 == 0:
             print('Step %i' % (i+1))
             print('Generator Loss:, Discriminator Loss: ', gl, dl)
 
