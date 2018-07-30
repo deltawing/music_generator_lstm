@@ -109,3 +109,65 @@ def Deconv2D(name, hidden_layer, filters, _biases, stride, height, width, out_di
         hidden_layer = tf.transpose(hidden_layer, [0,3,1,2], name='NHWC_to_NCHW')
         hidden_layer = tf.nn.relu(hidden_layer)
         return hidden_layer
+
+class QRNN():
+    # in_size =  X.get_shape()[2]  [batch_size, vertical, horizon]
+    # state vector size=128   conv_size = 5
+    def __init__(self, in_size, size, conv_size=2):
+        self.kernel = None
+        self.batch_size = -1
+        self.conv_size = conv_size
+        self.state = None
+        self.kernel = QRNNConvolution(in_size, size, conv_size)
+
+    def _step(self, f, z, o):
+        with tf.variable_scope("fo-Pool"):
+            # f,z,o is batch_size x size
+            f = tf.sigmoid(f)
+            z = tf.tanh(z)
+            o = tf.sigmoid(o)
+            self.state = tf.multiply(f, self.state) + tf.multiply(1 - f, z)
+            self.output = tf.multiply(o, self.state)  # output is size vector
+
+        return self.output
+
+    def forward(self, x):
+        # X.get_shape() [batch_size, vertical, horizon]
+        length = lambda mx: int(mx.get_shape()[0])
+        with tf.variable_scope("QRNN/Forward"):
+            if self.state is None:
+                # init context cell  [batch_size, 128]
+                self.state = tf.zeros([length(x), self.kernel.size], dtype=tf.float32)
+            c_f, c_z, c_o = self.kernel.conv(x)  #[vertical x batch_size x size]
+            for i in range(length(c_f)):    #[vertical]
+                f, z, o = c_f[i], c_z[i], c_o[i]  #[batch_size x size]
+                self._step(f, z, o)
+                
+        return self.output
+
+class QRNNConvolution():
+    # in_size =  X.get_shape()[2]  [batch_size, vertical, horizon]
+    # state vector size=128   conv_size = 5
+    def __init__(self, in_size, size, conv_size):
+        self.in_size = in_size
+        self.size = size
+        self.conv_size = conv_size
+        self._weight_size = self.size * 3  # z, f, o
+
+        with tf.variable_scope("QRNN/Variable/Convolution"):
+            initializer = tf.random_normal_initializer()
+            # conv_filter [conv_size, horizon, (128*3)] 
+            # 一般的filter格式是[filter_width, in_channels, out_channels]
+            self.filter = tf.get_variable("conv_filter", 
+                            [conv_size, in_size, self._weight_size], initializer=initializer)
+
+    def conv(self, x):
+        # X.get_shape() [batch_size, vertical, horizon]
+        _weighted = tf.nn.conv1d(x, self.filter, stride=1, padding="SAME", data_format="NWC")
+        # conv1d data_format Defaults to [batch, in_width, in_channels]
+        # _weighted is batch_size x vertical x output_channel 
+        
+        _w = tf.transpose(_weighted, [1, 0, 2])  # vertical x  batch_size x output_channel
+        _ws = tf.split(_w, num_or_size_splits=3, axis=2) 
+        # make 3(f, z, o) conved_size(?vertical) x  batch_size x size
+        return _ws
